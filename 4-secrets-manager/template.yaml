@@ -1,0 +1,60 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Secrets Manager secrets for PGP credentials'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: 'sftp-decrypt'
+    Description: Project name for resource naming and tagging
+
+  PGPPrivateKey:
+    Type: String
+    NoEcho: true
+    Description: PGP private key (ASCII-armored format)
+
+  PGPPassphrase:
+    Type: String
+    NoEcho: true
+    Description: Passphrase for PGP private key
+
+Resources:
+  # ============================================================================
+  # PGP Credentials Secret
+  # ============================================================================
+  PGPCredentialsSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub
+        - 'aws/transfer/${TransferServerId}/@pgp-default'
+        - TransferServerId:
+            Fn::ImportValue: !Sub '${ProjectName}-TransferServerId'
+      Description: PGP private key and passphrase for decryption
+      SecretString: !Sub |
+        {
+          "PGPPrivateKey": "${PGPPrivateKey}",
+          "PGPPassphrase": "${PGPPassphrase}"
+        }
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-pgp-credentials'
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ============================================================================
+  # Secret Rotation (Optional - for production)
+  # ============================================================================
+  # NOTE: Automatic rotation requires Lambda function to generate new PGP keys
+  # For now, manual rotation is recommended
+
+Outputs:
+  PGPCredentialsSecretArn:
+    Description: ARN of PGP credentials secret
+    Value: !Ref PGPCredentialsSecret
+    Export:
+      Name: !Sub '${ProjectName}-PGPCredentialsSecretArn'
+
+  PGPCredentialsSecretName:
+    Description: Name of PGP credentials secret
+    Value: !Ref PGPCredentialsSecret
+    Export:
+      Name: !Sub '${ProjectName}-PGPCredentialsSecretName'

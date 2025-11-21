@@ -1,0 +1,368 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Lambda to Fargate PGP Decryption Infrastructure for AWS Transfer Family'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: 'sftp-decrypt'
+    Description: Project name (must match other stacks for imports)
+
+  ContainerImage:
+    Type: String
+    Description: ECR image URI for Fargate container (e.g., 123456789012.dkr.ecr.us-east-1.amazonaws.com/pgp-decrypt:latest)
+
+  FargateThresholdGB:
+    Type: Number
+    Default: 1
+    Description: File size threshold in GB for using Fargate (files >= this size use Fargate)
+    MinValue: 0.1
+    MaxValue: 100
+
+  FargateCpu:
+    Type: String
+    Default: '4096'
+    Description: Fargate task CPU units (256, 512, 1024, 2048, 4096, 8192, 16384)
+    AllowedValues:
+      - '256'
+      - '512'
+      - '1024'
+      - '2048'
+      - '4096'
+      - '8192'
+      - '16384'
+
+  FargateMemory:
+    Type: String
+    Default: '8192'
+    Description: Fargate task memory in MB (must be compatible with CPU selection)
+
+Resources:
+  # ============================================================================
+  # ECR Repository for Fargate Container Image
+  # ============================================================================
+  ECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub '${AWS::StackName}-pgp-decrypt'
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep last 10 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+
+  # ============================================================================
+  # ECS Cluster
+  # ============================================================================
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub '${AWS::StackName}-cluster'
+      CapacityProviders:
+        - FARGATE
+        - FARGATE_SPOT
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: FARGATE
+          Weight: 1
+          Base: 0
+
+  # ============================================================================
+  # CloudWatch Log Group for Fargate Tasks
+  # ============================================================================
+  FargateLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/ecs/${AWS::StackName}-pgp-decrypt'
+      RetentionInDays: 14
+
+  # ============================================================================
+  # Security Group for Fargate Tasks
+  # ============================================================================
+  FargateSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for PGP decrypt Fargate tasks
+      VpcId:
+        Fn::ImportValue: !Sub '${ProjectName}-VpcId'
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic
+
+  # ============================================================================
+  # IAM Role for ECS Task Execution (pulls image, writes logs)
+  # ============================================================================
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-TaskExecutionRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: ECRAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                Resource: '*'
+
+  # ============================================================================
+  # IAM Role for ECS Task (runtime permissions for S3, Secrets Manager, Transfer)
+  # ============================================================================
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-TaskRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectAttributes
+                Resource:
+                  - Fn::Sub:
+                      - '${SourceBucketArn}/*'
+                      - SourceBucketArn:
+                          Fn::ImportValue: !Sub '${ProjectName}-SourceBucketArn'
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                Resource:
+                  - Fn::Sub:
+                      - '${DestinationBucketArn}/*'
+                      - DestinationBucketArn:
+                          Fn::ImportValue: !Sub '${ProjectName}-DestinationBucketArn'
+
+        - PolicyName: SecretsManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - Fn::Sub:
+                      - 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:aws/transfer/${TransferServerId}/*'
+                      - TransferServerId:
+                          Fn::ImportValue: !Sub '${ProjectName}-TransferServerId'
+
+        - PolicyName: TransferCallback
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - transfer:SendWorkflowStepState
+                Resource: '*'
+
+  # ============================================================================
+  # ECS Task Definition
+  # ============================================================================
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub '${AWS::StackName}-pgp-decrypt'
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: !Ref FargateCpu
+      Memory: !Ref FargateMemory
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ContainerDefinitions:
+        - Name: decrypt-container
+          Image: !Ref ContainerImage
+          Essential: true
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref FargateLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: fargate
+          Environment:
+            - Name: AWS_DEFAULT_REGION
+              Value: !Ref AWS::Region
+
+  # ============================================================================
+  # IAM Role for Lambda Orchestrator
+  # ============================================================================
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-LambdaExecutionRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: ECSAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecs:RunTask
+                Resource:
+                  - !Ref TaskDefinition
+
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:HeadObject
+                  - s3:GetObjectAttributes
+                Resource:
+                  - Fn::Sub:
+                      - '${SourceBucketArn}/*'
+                      - SourceBucketArn:
+                          Fn::ImportValue: !Sub '${ProjectName}-SourceBucketArn'
+
+        - PolicyName: TransferCallback
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - transfer:SendWorkflowStepState
+                Resource: '*'
+
+        - PolicyName: IAMPassRole
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource:
+                  - !GetAtt TaskExecutionRole.Arn
+                  - !GetAtt TaskRole.Arn
+                Condition:
+                  StringLike:
+                    iam:PassedToService: ecs-tasks.amazonaws.com
+
+  # ============================================================================
+  # Lambda Orchestrator Function
+  # ============================================================================
+  OrchestratorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-orchestrator'
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 60
+      MemorySize: 256
+      Environment:
+        Variables:
+          ECS_CLUSTER_NAME: !Ref ECSCluster
+          TASK_DEFINITION: !Ref TaskDefinition
+          SUBNET_IDS:
+            Fn::ImportValue: !Sub '${ProjectName}-PrivateSubnetIds'
+          SECURITY_GROUP_ID: !Ref FargateSecurityGroup
+          DESTINATION_BUCKET:
+            Fn::ImportValue: !Sub '${ProjectName}-DestinationBucketName'
+          TRANSFER_SERVER_ID:
+            Fn::ImportValue: !Sub '${ProjectName}-TransferServerId'
+          CONTAINER_NAME: 'decrypt-container'
+          FARGATE_THRESHOLD_BYTES: !Sub '${FargateThresholdGB}000000000'
+      Code:
+        ZipFile: |
+          exports.handler = async (event) => {
+            console.log('Placeholder orchestrator - deploy actual code');
+            return { statusCode: 200, body: 'OK' };
+          };
+
+  # ============================================================================
+  # CloudWatch Log Group for Lambda
+  # ============================================================================
+  LambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${OrchestratorFunction}'
+      RetentionInDays: 14
+
+Outputs:
+  ECRRepositoryUri:
+    Description: ECR Repository URI for pushing Docker images
+    Value: !GetAtt ECRRepository.RepositoryUri
+    Export:
+      Name: !Sub '${AWS::StackName}-ECRRepositoryUri'
+
+  ECSClusterName:
+    Description: ECS Cluster Name
+    Value: !Ref ECSCluster
+    Export:
+      Name: !Sub '${AWS::StackName}-ECSClusterName'
+
+  TaskDefinitionArn:
+    Description: ECS Task Definition ARN
+    Value: !Ref TaskDefinition
+    Export:
+      Name: !Sub '${AWS::StackName}-TaskDefinitionArn'
+
+  OrchestratorFunctionArn:
+    Description: Lambda Orchestrator Function ARN
+    Value: !GetAtt OrchestratorFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-OrchestratorFunctionArn'
+
+  OrchestratorFunctionName:
+    Description: Lambda Orchestrator Function Name
+    Value: !Ref OrchestratorFunction
+    Export:
+      Name: !Sub '${AWS::StackName}-OrchestratorFunctionName'
+
+  FargateSecurityGroupId:
+    Description: Security Group ID for Fargate tasks
+    Value: !Ref FargateSecurityGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-FargateSecurityGroupId'
+
+  FargateLogGroupName:
+    Description: CloudWatch Log Group for Fargate tasks
+    Value: !Ref FargateLogGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-FargateLogGroupName'

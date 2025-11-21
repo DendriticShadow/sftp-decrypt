@@ -1,0 +1,27 @@
+{
+  "name": "sftp-decrypt-fargate",
+  "version": "1.0.0",
+  "description": "Fargate worker for decrypting large PGP-encrypted files from AWS Transfer Family SFTP",
+  "main": "decrypt.js",
+  "scripts": {
+    "start": "node decrypt.js"
+  },
+  "keywords": [
+    "aws",
+    "fargate",
+    "ecs",
+    "pgp",
+    "sftp",
+    "decrypt",
+    "transfer-family"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.600.0",
+    "@aws-sdk/client-secrets-manager": "^3.600.0",
+    "@aws-sdk/client-transfer": "^3.600.0",
+    "@smithy/node-http-handler": "^3.0.0",
+    "openpgp": "^5.11.3"
+  }
+}

@@ -1,0 +1,143 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS Transfer Family SFTP Server'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: 'sftp-decrypt'
+    Description: Project name for resource naming and tagging
+
+  IdentityProviderType:
+    Type: String
+    Default: 'SERVICE_MANAGED'
+    AllowedValues:
+      - 'SERVICE_MANAGED'
+      - 'API_GATEWAY'
+      - 'AWS_DIRECTORY_SERVICE'
+      - 'AWS_LAMBDA'
+    Description: Identity provider type for user authentication
+
+  EndpointType:
+    Type: String
+    Default: 'PUBLIC'
+    AllowedValues:
+      - 'PUBLIC'
+      - 'VPC'
+    Description: Endpoint type for SFTP access
+
+Resources:
+  # ============================================================================
+  # CloudWatch Log Group for Transfer Server
+  # ============================================================================
+  TransferLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/transfer/${ProjectName}'
+      RetentionInDays: 14
+
+  # ============================================================================
+  # IAM Role for Transfer Server Logging
+  # ============================================================================
+  TransferLoggingRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-TransferLoggingRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: transfer.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSTransferLoggingAccess
+
+  # ============================================================================
+  # IAM Role for Transfer Users (S3 Access)
+  # ============================================================================
+  TransferUserRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-TransferUserRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: transfer.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Allow listing bucket
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+                Resource:
+                  - Fn::ImportValue: !Sub '${ProjectName}-SourceBucketArn'
+
+              # Allow read/write in user's home directory
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:DeleteObject
+                  - s3:DeleteObjectVersion
+                Resource:
+                  - Fn::Sub:
+                      - '${BucketArn}/in/sftp/$${transfer:UserName}/*'
+                      - BucketArn:
+                          Fn::ImportValue: !Sub '${ProjectName}-SourceBucketArn'
+
+  # ============================================================================
+  # Transfer Server
+  # ============================================================================
+  TransferServer:
+    Type: AWS::Transfer::Server
+    Properties:
+      EndpointType: !Ref EndpointType
+      IdentityProviderType: !Ref IdentityProviderType
+      LoggingRole: !GetAtt TransferLoggingRole.Arn
+      Protocols:
+        - SFTP
+      SecurityPolicyName: TransferSecurityPolicy-2023-05
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-sftp-server'
+        - Key: Project
+          Value: !Ref ProjectName
+
+Outputs:
+  TransferServerId:
+    Description: Transfer Server ID
+    Value: !GetAtt TransferServer.ServerId
+    Export:
+      Name: !Sub '${ProjectName}-TransferServerId'
+
+  TransferServerArn:
+    Description: Transfer Server ARN
+    Value: !GetAtt TransferServer.Arn
+    Export:
+      Name: !Sub '${ProjectName}-TransferServerArn'
+
+  TransferServerEndpoint:
+    Description: Transfer Server Endpoint
+    Value: !Sub '${TransferServer.ServerId}.server.transfer.${AWS::Region}.amazonaws.com'
+    Export:
+      Name: !Sub '${ProjectName}-TransferServerEndpoint'
+
+  TransferUserRoleArn:
+    Description: IAM Role ARN for Transfer Users
+    Value: !GetAtt TransferUserRole.Arn
+    Export:
+      Name: !Sub '${ProjectName}-TransferUserRoleArn'
+
+  TransferLogGroupName:
+    Description: CloudWatch Log Group for Transfer Server
+    Value: !Ref TransferLogGroup
+    Export:
+      Name: !Sub '${ProjectName}-TransferLogGroupName'

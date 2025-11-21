@@ -1,0 +1,21 @@
+{
+  "name": "sftp-decrypt-orchestrator",
+  "version": "1.0.0",
+  "description": "Lambda orchestrator for routing PGP decryption to Fargate or inline processing",
+  "main": "orchestrator.js",
+  "keywords": [
+    "aws",
+    "lambda",
+    "ecs",
+    "fargate",
+    "orchestrator",
+    "transfer-family"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@aws-sdk/client-ecs": "^3.600.0",
+    "@aws-sdk/client-s3": "^3.600.0",
+    "@aws-sdk/client-transfer": "^3.600.0"
+  }
+}

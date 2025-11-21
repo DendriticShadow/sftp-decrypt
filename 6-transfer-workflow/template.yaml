@@ -1,0 +1,69 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS Transfer Family Workflow for PGP Decryption'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: 'sftp-decrypt'
+    Description: Project name (must match other stacks for imports)
+
+Resources:
+  # ============================================================================
+  # Transfer Workflow
+  # ============================================================================
+  DecryptionWorkflow:
+    Type: AWS::Transfer::Workflow
+    Properties:
+      Description: Workflow to decrypt PGP files on upload
+      Steps:
+        # Step 1: Trigger Lambda function to decrypt
+        - Type: CUSTOM
+          CustomStepDetails:
+            Name: DecryptPGPFile
+            Target:
+              Fn::ImportValue: !Sub '${ProjectName}-OrchestratorFunctionArn'
+            TimeoutSeconds: 300
+            SourceFileLocation: '${original.file}'
+
+        # Step 2: Delete original encrypted file after successful decryption
+        - Type: DELETE
+          DeleteStepDetails:
+            Name: DeleteEncryptedFile
+            SourceFileLocation: '${original.file}'
+
+      OnExceptionSteps:
+        # On failure: Move file to quarantine
+        - Type: COPY
+          CopyStepDetails:
+            Name: MoveToQuarantine
+            SourceFileLocation: '${original.file}'
+            DestinationFileLocation:
+              Bucket:
+                Fn::ImportValue: !Sub '${ProjectName}-SourceBucketName'
+              Key: 'quarantine/${transfer:UserName}/${original.file}'
+            OverwriteExisting: 'TRUE'
+
+        # Delete from original location after quarantine
+        - Type: DELETE
+          DeleteStepDetails:
+            Name: DeleteAfterQuarantine
+            SourceFileLocation: '${original.file}'
+
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-decrypt-workflow'
+        - Key: Project
+          Value: !Ref ProjectName
+
+Outputs:
+  WorkflowId:
+    Description: Transfer Workflow ID
+    Value: !GetAtt DecryptionWorkflow.WorkflowId
+    Export:
+      Name: !Sub '${ProjectName}-WorkflowId'
+
+  WorkflowArn:
+    Description: Transfer Workflow ARN
+    Value: !GetAtt DecryptionWorkflow.Arn
+    Export:
+      Name: !Sub '${ProjectName}-WorkflowArn'

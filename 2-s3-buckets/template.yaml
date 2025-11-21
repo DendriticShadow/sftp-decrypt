@@ -1,0 +1,196 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'S3 buckets for SFTP Transfer Family and PGP decryption'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: 'sftp-decrypt'
+    Description: Project name for resource naming and tagging
+
+  SourceBucketName:
+    Type: String
+    Description: Name for source S3 bucket (encrypted files from Transfer Family)
+
+  DestinationBucketName:
+    Type: String
+    Description: Name for destination S3 bucket (decrypted files)
+
+  EnableVersioning:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Enable versioning on buckets
+
+  RetentionDays:
+    Type: Number
+    Default: 30
+    Description: Days to retain files before transitioning to Glacier or deletion
+
+Resources:
+  # ============================================================================
+  # Source Bucket (Encrypted Files)
+  # ============================================================================
+  SourceBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref SourceBucketName
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: !If [EnableVersioningCondition, Enabled, Suspended]
+      LifecycleConfiguration:
+        Rules:
+          # Archive encrypted files after retention period
+          - Id: ArchiveEncryptedFiles
+            Status: Enabled
+            Prefix: 'in/sftp/'
+            ExpirationInDays: !Ref RetentionDays
+            NoncurrentVersionExpirationInDays: 7
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Name
+          Value: !Ref SourceBucketName
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Purpose
+          Value: 'SFTP encrypted files'
+
+  # ============================================================================
+  # Destination Bucket (Decrypted Files)
+  # ============================================================================
+  DestinationBucket:
+    Type: AWS::S3::Bucket
+    Condition: CreateSeparateDestinationBucket
+    Properties:
+      BucketName: !Ref DestinationBucketName
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: !If [EnableVersioningCondition, Enabled, Suspended]
+      LifecycleConfiguration:
+        Rules:
+          # Keep decrypted files for retention period
+          - Id: ArchiveDecryptedFiles
+            Status: Enabled
+            Prefix: 'in/decrypted/'
+            Transitions:
+              - TransitionInDays: !Ref RetentionDays
+                StorageClass: GLACIER
+            NoncurrentVersionExpirationInDays: 7
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Name
+          Value: !Ref DestinationBucketName
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Purpose
+          Value: 'Decrypted files'
+
+  # ============================================================================
+  # Bucket Policies
+  # ============================================================================
+  SourceBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SourceBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          # Deny unencrypted uploads
+          - Sid: DenyUnencryptedUploads
+            Effect: Deny
+            Principal: '*'
+            Action: s3:PutObject
+            Resource: !Sub '${SourceBucket.Arn}/*'
+            Condition:
+              StringNotEquals:
+                s3:x-amz-server-side-encryption: AES256
+
+          # Enforce SSL/TLS
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt SourceBucket.Arn
+              - !Sub '${SourceBucket.Arn}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+
+  DestinationBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Condition: CreateSeparateDestinationBucket
+    Properties:
+      Bucket: !Ref DestinationBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          # Deny unencrypted uploads
+          - Sid: DenyUnencryptedUploads
+            Effect: Deny
+            Principal: '*'
+            Action: s3:PutObject
+            Resource: !Sub '${DestinationBucket.Arn}/*'
+            Condition:
+              StringNotEquals:
+                s3:x-amz-server-side-encryption: AES256
+
+          # Enforce SSL/TLS
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt DestinationBucket.Arn
+              - !Sub '${DestinationBucket.Arn}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+
+Conditions:
+  EnableVersioningCondition: !Equals [!Ref EnableVersioning, 'true']
+  CreateSeparateDestinationBucket: !Not [!Equals [!Ref SourceBucketName, !Ref DestinationBucketName]]
+
+Outputs:
+  SourceBucketName:
+    Description: Source S3 bucket name
+    Value: !Ref SourceBucket
+    Export:
+      Name: !Sub '${ProjectName}-SourceBucketName'
+
+  SourceBucketArn:
+    Description: Source S3 bucket ARN
+    Value: !GetAtt SourceBucket.Arn
+    Export:
+      Name: !Sub '${ProjectName}-SourceBucketArn'
+
+  DestinationBucketName:
+    Description: Destination S3 bucket name (same as source if not separate)
+    Value: !If
+      - CreateSeparateDestinationBucket
+      - !Ref DestinationBucket
+      - !Ref SourceBucket
+    Export:
+      Name: !Sub '${ProjectName}-DestinationBucketName'
+
+  DestinationBucketArn:
+    Description: Destination S3 bucket ARN
+    Value: !If
+      - CreateSeparateDestinationBucket
+      - !GetAtt DestinationBucket.Arn
+      - !GetAtt SourceBucket.Arn
+    Export:
+      Name: !Sub '${ProjectName}-DestinationBucketArn'
