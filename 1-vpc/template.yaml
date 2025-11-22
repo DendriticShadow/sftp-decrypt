@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'VPC with private subnets and NAT Gateway for SFTP Decrypt infrastructure'
+Description: 'VPC with public subnet for SFTP Decrypt infrastructure (Cost-optimized, Single AZ)'
 
 Parameters:
   ProjectName:
@@ -12,25 +12,10 @@ Parameters:
     Default: '10.0.0.0/16'
     Description: CIDR block for VPC
 
-  PrivateSubnet1Cidr:
-    Type: String
-    Default: '10.0.1.0/24'
-    Description: CIDR block for private subnet 1
-
-  PrivateSubnet2Cidr:
-    Type: String
-    Default: '10.0.2.0/24'
-    Description: CIDR block for private subnet 2
-
   PublicSubnet1Cidr:
     Type: String
-    Default: '10.0.101.0/24'
-    Description: CIDR block for public subnet 1 (for NAT Gateway)
-
-  PublicSubnet2Cidr:
-    Type: String
-    Default: '10.0.102.0/24'
-    Description: CIDR block for public subnet 2 (for NAT Gateway)
+    Default: '10.0.1.0/24'
+    Description: CIDR block for public subnet
 
 Resources:
   # ============================================================================
@@ -67,7 +52,7 @@ Resources:
       InternetGatewayId: !Ref InternetGateway
 
   # ============================================================================
-  # Public Subnets (for NAT Gateways)
+  # Public Subnet (for Fargate tasks)
   # ============================================================================
   PublicSubnet1:
     Type: AWS::EC2::Subnet
@@ -78,97 +63,7 @@ Resources:
       MapPublicIpOnLaunch: true
       Tags:
         - Key: Name
-          Value: !Sub '${ProjectName}-public-subnet-1'
-        - Key: Project
-          Value: !Ref ProjectName
-
-  PublicSubnet2:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: !Ref PublicSubnet2Cidr
-      AvailabilityZone: !Select [1, !GetAZs '']
-      MapPublicIpOnLaunch: true
-      Tags:
-        - Key: Name
-          Value: !Sub '${ProjectName}-public-subnet-2'
-        - Key: Project
-          Value: !Ref ProjectName
-
-  # ============================================================================
-  # Private Subnets (for Fargate tasks)
-  # ============================================================================
-  PrivateSubnet1:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: !Ref PrivateSubnet1Cidr
-      AvailabilityZone: !Select [0, !GetAZs '']
-      Tags:
-        - Key: Name
-          Value: !Sub '${ProjectName}-private-subnet-1'
-        - Key: Project
-          Value: !Ref ProjectName
-
-  PrivateSubnet2:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: !Ref PrivateSubnet2Cidr
-      AvailabilityZone: !Select [1, !GetAZs '']
-      Tags:
-        - Key: Name
-          Value: !Sub '${ProjectName}-private-subnet-2'
-        - Key: Project
-          Value: !Ref ProjectName
-
-  # ============================================================================
-  # Elastic IPs for NAT Gateways
-  # ============================================================================
-  NatGateway1EIP:
-    Type: AWS::EC2::EIP
-    DependsOn: AttachGateway
-    Properties:
-      Domain: vpc
-      Tags:
-        - Key: Name
-          Value: !Sub '${ProjectName}-nat-eip-1'
-        - Key: Project
-          Value: !Ref ProjectName
-
-  NatGateway2EIP:
-    Type: AWS::EC2::EIP
-    DependsOn: AttachGateway
-    Properties:
-      Domain: vpc
-      Tags:
-        - Key: Name
-          Value: !Sub '${ProjectName}-nat-eip-2'
-        - Key: Project
-          Value: !Ref ProjectName
-
-  # ============================================================================
-  # NAT Gateways
-  # ============================================================================
-  NatGateway1:
-    Type: AWS::EC2::NatGateway
-    Properties:
-      AllocationId: !GetAtt NatGateway1EIP.AllocationId
-      SubnetId: !Ref PublicSubnet1
-      Tags:
-        - Key: Name
-          Value: !Sub '${ProjectName}-nat-1'
-        - Key: Project
-          Value: !Ref ProjectName
-
-  NatGateway2:
-    Type: AWS::EC2::NatGateway
-    Properties:
-      AllocationId: !GetAtt NatGateway2EIP.AllocationId
-      SubnetId: !Ref PublicSubnet2
-      Tags:
-        - Key: Name
-          Value: !Sub '${ProjectName}-nat-2'
+          Value: !Sub '${ProjectName}-public-subnet'
         - Key: Project
           Value: !Ref ProjectName
 
@@ -199,63 +94,8 @@ Resources:
       SubnetId: !Ref PublicSubnet1
       RouteTableId: !Ref PublicRouteTable
 
-  PublicSubnet2RouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PublicSubnet2
-      RouteTableId: !Ref PublicRouteTable
-
   # ============================================================================
-  # Private Route Tables (one per AZ for high availability)
-  # ============================================================================
-  PrivateRouteTable1:
-    Type: AWS::EC2::RouteTable
-    Properties:
-      VpcId: !Ref VPC
-      Tags:
-        - Key: Name
-          Value: !Sub '${ProjectName}-private-rt-1'
-        - Key: Project
-          Value: !Ref ProjectName
-
-  PrivateRoute1:
-    Type: AWS::EC2::Route
-    Properties:
-      RouteTableId: !Ref PrivateRouteTable1
-      DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !Ref NatGateway1
-
-  PrivateSubnet1RouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PrivateSubnet1
-      RouteTableId: !Ref PrivateRouteTable1
-
-  PrivateRouteTable2:
-    Type: AWS::EC2::RouteTable
-    Properties:
-      VpcId: !Ref VPC
-      Tags:
-        - Key: Name
-          Value: !Sub '${ProjectName}-private-rt-2'
-        - Key: Project
-          Value: !Ref ProjectName
-
-  PrivateRoute2:
-    Type: AWS::EC2::Route
-    Properties:
-      RouteTableId: !Ref PrivateRouteTable2
-      DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !Ref NatGateway2
-
-  PrivateSubnet2RouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PrivateSubnet2
-      RouteTableId: !Ref PrivateRouteTable2
-
-  # ============================================================================
-  # VPC Endpoints for AWS Services (reduces NAT Gateway costs)
+  # VPC Endpoint for S3 (FREE - saves data transfer costs)
   # ============================================================================
   S3VpcEndpoint:
     Type: AWS::EC2::VPCEndpoint
@@ -263,65 +103,8 @@ Resources:
       VpcId: !Ref VPC
       ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3'
       RouteTableIds:
-        - !Ref PrivateRouteTable1
-        - !Ref PrivateRouteTable2
+        - !Ref PublicRouteTable
       VpcEndpointType: Gateway
-
-  # Security Group for VPC Endpoints
-  VpcEndpointSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Security group for VPC endpoints
-      VpcId: !Ref VPC
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 443
-          ToPort: 443
-          CidrIp: !Ref VpcCidr
-      Tags:
-        - Key: Name
-          Value: !Sub '${ProjectName}-vpce-sg'
-        - Key: Project
-          Value: !Ref ProjectName
-
-  ECRApiVpcEndpoint:
-    Type: AWS::EC2::VPCEndpoint
-    Properties:
-      VpcId: !Ref VPC
-      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ecr.api'
-      VpcEndpointType: Interface
-      PrivateDnsEnabled: true
-      SubnetIds:
-        - !Ref PrivateSubnet1
-        - !Ref PrivateSubnet2
-      SecurityGroupIds:
-        - !Ref VpcEndpointSecurityGroup
-
-  ECRDkrVpcEndpoint:
-    Type: AWS::EC2::VPCEndpoint
-    Properties:
-      VpcId: !Ref VPC
-      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ecr.dkr'
-      VpcEndpointType: Interface
-      PrivateDnsEnabled: true
-      SubnetIds:
-        - !Ref PrivateSubnet1
-        - !Ref PrivateSubnet2
-      SecurityGroupIds:
-        - !Ref VpcEndpointSecurityGroup
-
-  SecretsManagerVpcEndpoint:
-    Type: AWS::EC2::VPCEndpoint
-    Properties:
-      VpcId: !Ref VPC
-      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.secretsmanager'
-      VpcEndpointType: Interface
-      PrivateDnsEnabled: true
-      SubnetIds:
-        - !Ref PrivateSubnet1
-        - !Ref PrivateSubnet2
-      SecurityGroupIds:
-        - !Ref VpcEndpointSecurityGroup
 
 Outputs:
   VpcId:
@@ -336,32 +119,20 @@ Outputs:
     Export:
       Name: !Sub '${ProjectName}-VpcCidr'
 
-  PrivateSubnet1Id:
-    Description: Private Subnet 1 ID
-    Value: !Ref PrivateSubnet1
-    Export:
-      Name: !Sub '${ProjectName}-PrivateSubnet1Id'
-
-  PrivateSubnet2Id:
-    Description: Private Subnet 2 ID
-    Value: !Ref PrivateSubnet2
-    Export:
-      Name: !Sub '${ProjectName}-PrivateSubnet2Id'
-
-  PrivateSubnetIds:
-    Description: Private Subnet IDs (comma-separated)
-    Value: !Sub '${PrivateSubnet1},${PrivateSubnet2}'
-    Export:
-      Name: !Sub '${ProjectName}-PrivateSubnetIds'
-
   PublicSubnet1Id:
-    Description: Public Subnet 1 ID
+    Description: Public Subnet ID
     Value: !Ref PublicSubnet1
     Export:
       Name: !Sub '${ProjectName}-PublicSubnet1Id'
 
-  PublicSubnet2Id:
-    Description: Public Subnet 2 ID
-    Value: !Ref PublicSubnet2
+  PrivateSubnetIds:
+    Description: Subnet IDs for Fargate (public subnet, backward compatible export name)
+    Value: !Ref PublicSubnet1
     Export:
-      Name: !Sub '${ProjectName}-PublicSubnet2Id'
+      Name: !Sub '${ProjectName}-PrivateSubnetIds'
+
+  PrivateSubnet1Id:
+    Description: Subnet ID for Fargate (public subnet, backward compatible export name)
+    Value: !Ref PublicSubnet1
+    Export:
+      Name: !Sub '${ProjectName}-PrivateSubnet1Id'
