@@ -23,7 +23,7 @@
   - AWS Lambda entry point that orchestrates the entire workflow
 
   Core Functions:
-  1. extractPathComponents() - Parses S3 paths to extract username from in/sftp/{username}/... format
+  1. extractPathComponents() - Parses S3 paths to extract username
   2. getPGPCredentials() - Retrieves PGP private key and passphrase from Secrets Manager
   3. streamToBuffer() - Converts S3 streams to buffers
   4. decryptPGPContent() - Core decryption logic supporting both ASCII-armored and binary PGP formats
