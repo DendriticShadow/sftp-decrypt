@@ -34,7 +34,7 @@
   2. Downloads encrypted file from S3
   3. Fetches PGP credentials from Secrets Manager (secret name: aws/transfer/{serverId}/@pgp-default)
   4. Decrypts content
-  5. Uploads to in/decrypted/{username}/ (removes .pgp extension)
+  5. Uploads to {destinationBucket}/{username}/ (removes .pgp extension)
   6. Reports success/failure back to AWS Transfer
 
   Technologies
