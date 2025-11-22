@@ -12,6 +12,7 @@ PROJECT_NAME=${2:-sftp-decrypt}
 PGP_KEY_FILE=${3}
 PGP_PASSPHRASE=${4}
 AWS_REGION=${5:-us-east-1}
+AWS_PROFILE=${AWS_PROFILE:-teamcity}
 
 if [ -z "$PGP_KEY_FILE" ] || [ -z "$PGP_PASSPHRASE" ]; then
   echo "Error: PGP private key file and passphrase are required"
@@ -29,6 +30,7 @@ echo "Stack Name: $STACK_NAME"
 echo "Project Name: $PROJECT_NAME"
 echo "PGP Key File: $PGP_KEY_FILE"
 echo "Region: $AWS_REGION"
+echo "AWS Profile: $AWS_PROFILE"
 echo ""
 
 # Read PGP private key
@@ -38,7 +40,8 @@ PGP_PRIVATE_KEY=$(cat "$PGP_KEY_FILE")
 echo "Validating CloudFormation template..."
 aws cloudformation validate-template \
   --template-body file://template.yaml \
-  --region $AWS_REGION > /dev/null
+  --region $AWS_REGION \
+  --profile $AWS_PROFILE > /dev/null
 
 echo "✓ Template is valid"
 echo ""
@@ -68,6 +71,7 @@ aws cloudformation deploy \
   --template-file template.yaml \
   --stack-name $STACK_NAME \
   --region $AWS_REGION \
+  --profile $AWS_PROFILE \
   --parameter-overrides file://$PARAM_FILE
 
 # Clean up parameter file
@@ -82,5 +86,6 @@ echo "Stack Outputs:"
 aws cloudformation describe-stacks \
   --stack-name $STACK_NAME \
   --region $AWS_REGION \
+  --profile $AWS_PROFILE \
   --query 'Stacks[0].Outputs' \
   --output table
