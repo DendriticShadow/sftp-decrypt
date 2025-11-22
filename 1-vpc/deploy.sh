@@ -21,8 +21,8 @@ echo ""
 echo "Validating CloudFormation template..."
 aws cloudformation validate-template \
   --template-body file://template.yaml \
-  --region $AWS_REGION \
-  --profile $AWS_PROFILE > /dev/null
+  --region "$AWS_REGION" \
+  --profile "$AWS_PROFILE" > /dev/null
 
 echo "✓ Template is valid"
 echo ""
@@ -31,11 +31,11 @@ echo ""
 echo "Deploying stack..."
 aws cloudformation deploy \
   --template-file template.yaml \
-  --stack-name $STACK_NAME \
-  --region $AWS_REGION \
-  --profile $AWS_PROFILE \
+  --stack-name "$STACK_NAME" \
+  --region "$AWS_REGION" \
+  --profile "$AWS_PROFILE" \
   --parameter-overrides \
-      ProjectName=$PROJECT_NAME
+      ProjectName="$PROJECT_NAME"
 
 echo ""
 echo "✓ VPC stack deployed successfully"
@@ -44,8 +44,8 @@ echo ""
 # Show outputs
 echo "Stack Outputs:"
 aws cloudformation describe-stacks \
-  --stack-name $STACK_NAME \
-  --region $AWS_REGION \
-  --profile $AWS_PROFILE \
+  --stack-name "$STACK_NAME" \
+  --region "$AWS_REGION" \
+  --profile "$AWS_PROFILE" \
   --query 'Stacks[0].Outputs' \
   --output table
