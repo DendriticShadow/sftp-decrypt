@@ -1,22 +1,43 @@
 # S3 Buckets
 
-This component creates S3 buckets for encrypted and decrypted files.
+This CloudFormation template creates S3 buckets for storing encrypted files uploaded via SFTP and the resulting decrypted files.
 
 ## Resources Created
 
-- Source S3 bucket (for encrypted files from SFTP)
-- Destination S3 bucket (for decrypted files) - optional, can use same bucket
-- Bucket policies enforcing encryption and secure transport
-- Lifecycle rules for archival and cleanup
+**Source Bucket** - Stores encrypted PGP files uploaded via AWS Transfer Family SFTP
+- Used by SFTP users to upload encrypted files to `/in/sftp/{username}/` paths
+- Transfer Family workflow triggers decryption when files arrive
+- Quarantine path (`/quarantine/{username}/`) for files that fail decryption
 
-## Exports
+**Destination Bucket** (conditional) - Stores decrypted files after processing
+- Created only if you specify a different name than the source bucket
+- If source and destination names are the same, both paths exist in one bucket
+- Fargate tasks write decrypted files here
 
-This stack exports the following values:
+**Security Features:**
+- Server-side encryption (AES256) enabled on all buckets
+- Versioning enabled to protect against accidental deletion
+- Public access completely blocked
+- Access controlled through IAM roles (no bucket policies)
 
-- `sftp-decrypt-SourceBucketName` - Source bucket name
-- `sftp-decrypt-SourceBucketArn` - Source bucket ARN
-- `sftp-decrypt-DestinationBucketName` - Destination bucket name
-- `sftp-decrypt-DestinationBucketArn` - Destination bucket ARN
+## Parameters
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| ProjectName | No | Project name used for resource naming (default: `sftp-decrypt`) |
+| SourceBucketName | Yes | Name for the bucket receiving encrypted SFTP uploads |
+| DestinationBucketName | Yes | Name for the bucket storing decrypted files (can be same as source) |
+
+## Outputs
+
+The stack exports these values for use by other stacks:
+
+| Export Name | Description |
+|-------------|-------------|
+| `sftp-decrypt-SourceBucketName` | Source bucket name |
+| `sftp-decrypt-SourceBucketArn` | Source bucket ARN (for IAM policies) |
+| `sftp-decrypt-DestinationBucketName` | Destination bucket name |
+| `sftp-decrypt-DestinationBucketArn` | Destination bucket ARN (for IAM policies) |
 
 ## Deployment
 
@@ -24,48 +45,14 @@ This stack exports the following values:
 ./deploy.sh [stack-name] [project-name] [source-bucket] [dest-bucket] [region]
 ```
 
-Example - Same bucket for source and destination:
+**Example - Same bucket for source and destination:**
 ```bash
 ./deploy.sh sftp-decrypt-s3 sftp-decrypt my-sftp-bucket my-sftp-bucket us-east-1
 ```
 
-Example - Separate buckets:
+**Example - Separate buckets:**
 ```bash
-./deploy.sh sftp-decrypt-s3 sftp-decrypt sftp-encrypted sftp-decrypted us-east-1
+./deploy.sh sftp-decrypt-s3 sftp-decrypt sftp-source-bucket sftp-dest-bucket us-east-1
 ```
 
-## Parameters
-
-- `ProjectName` - Project name (default: `sftp-decrypt`)
-- `SourceBucketName` - Name for source bucket (required)
-- `DestinationBucketName` - Name for destination bucket (required)
-- `EnableVersioning` - Enable versioning (default: `true`)
-- `RetentionDays` - Days to retain files (default: `30`)
-
-## Bucket Structure
-
-```
-my-sftp-bucket/
-├── in/sftp/{username}/          # Encrypted files uploaded via SFTP
-├── in/decrypted/{username}/     # Decrypted files
-└── quarantine/{username}/       # Failed decryption files
-```
-
-## Dependencies
-
-None - This is a foundational component
-
-## Security Features
-
-- Server-side encryption (AES256) enforced
-- Public access blocked
-- SSL/TLS transport enforced
-- Versioning enabled (optional)
-
-## Cost Considerations
-
-- **Storage**: $0.023/GB/month (Standard)
-- **Requests**: Minimal (PUT/GET operations)
-- **Lifecycle transitions**: Files moved to Glacier after retention period
-
-**Example**: 100 GB average storage = ~$2.30/month
+The deploy script uses the AWS CLI profile specified by the `AWS_PROFILE` environment variable (default: `teamcity`).
