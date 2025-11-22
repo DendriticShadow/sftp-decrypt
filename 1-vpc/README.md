@@ -42,3 +42,4 @@ Example:
 ```
 
 The deploy script uses the AWS CLI profile specified by the `AWS_PROFILE` environment variable (default: `teamcity`).
+# Testing teamcity auto trigger
