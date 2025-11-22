@@ -44,5 +44,4 @@
   - OpenPGP library for encryption
   - Integrated with AWS Transfer Family workflows
 
-  The project is focused and production-ready for its specific use case of automated PGP decryption in SFTP
-  workflows.
+  The project is focused on automated PGP decryption in SFTP workflows.
