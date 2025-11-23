@@ -1,47 +1,65 @@
 # sftp-decrypt
-  This is an AWS Lambda function that automatically decrypts PGP-encrypted files uploaded via AWS Transfer Family
-  SFTP service.
 
-  Purpose
+  This was a project inspired from infrastructure I stood up at my current job. The main difference being this uses a fargate instance to handle the decryption process instead of soley existing in AWS Lambda.
 
-  - Receives PGP-encrypted files from SFTP uploads
-  - Retrieves decryption credentials from AWS Secrets Manager
-  - Decrypts files using OpenPGP cryptography
-  - Stores decrypted files back to S3
-  - Integrates with AWS Transfer workflow system
+  ## Purpose
+  - Automated PGP file decryption pipeline using AWS Transfer, Lambda orchestration, and ECS Fargate.
 
-  Structure
+  ## Structure
+  - I have my repo separated into 6 CloudFormation stacks. I'm doing this because 1. its easier for me to visualize in my head, 2. I use a self-hosted teamcity server running in docker to deploy my CloudFormation templates to AWS and 3. I like using cross-stack references.
+  - Included are deployment scripts you can run using AWS CLI.
+  - I have a lot of cost optimizations in place. If you deploy this in your own AWS account I'd recommend tweaking the cron job in the lambda function that stops/starts the SFTP endpoint if not removing it entirely. 
+  - Out of all the AWS resources deployed for this project, the SFTP endpoint is the most expensive to leave running. When you aren't using it I highly recommend you turn it off as leaving it on 24/7 will cost you about $230 per month.
 
-  The codebase is intentionally minimal:
-  - Single file: index.js (387 lines) - contains all logic
-  - No dependencies in repo: Uses AWS SDK v3 and openpgp library (managed at Lambda layer level)
-  - No build system: Direct Node.js Lambda deployment
+  ## Challenges
+  - When I started working on this originally, I was buffering the entire encrypted file into memory and then decrypting the file. This is fine for small files but larger files > 1 GB could easily require 5-6 GB of memory. This was not ideal.
+  - This was when I discovered streaming decryption. Here the file is fed into memory in chunks, the decrypted chunks are then streamed back to S3, with the stream terminating once it hits EOF (end of file). The default chunk size in the OpenPGP.js is 64 KB, you can tweak this to your hearts content depending on the average size of encrypted files you handle. The higher the chunk size the higher the memory consumption but an added benefit is speed.
+  
+ ## How this works
+ - User connects to SFTP endpoint via SSH. Lambda + Secrets Manager + Transfer authenticates user.
+  - I also use an IP allowlist so only IPs on that list can actually connect to the Transfer endpoint. 
+ - File uploaded to SFTP → triggers AWS Transfer workflow
+ - Workflow invokes Lambda orchestrator
+ - Orchestrator checks file size:
+ - Worker downloads encrypted file from S3 (streaming)
+ - Fetches PGP credentials from Secrets Manager (secret: `aws/transfer/{serverId}/@pgp-default`)
+ - Decrypts content using streaming (supports large files)
+ - Uploads to `{destinationBucket}/{username}/` (removes .pgp extension)
+ - Reports success/failure back to AWS Transfer workflow
+ - On failure: File moved to quarantine folder
 
-  Key Components
+  ## Deployment Order
+  - CloudFormation stacks must be deployed in the correct order due to cross-stack referencing. I have them numbered for that reason.
 
-  Main Handler (index.js)
-  - AWS Lambda entry point that orchestrates the entire workflow
+  ## AWS Services Used
+  **Compute:**
+  - AWS Lambda - Orchestrator for starting ECS task + user auth
+  - ECS Fargate - Container-based decryption
+  - ECR - Docker image repository
 
-  Core Functions:
-  1. extractPathComponents() - Parses S3 paths to extract username
-  2. getPGPCredentials() - Retrieves PGP private key and passphrase from Secrets Manager
-  3. streamToBuffer() - Converts S3 streams to buffers
-  4. decryptPGPContent() - Core decryption logic supporting both ASCII-armored and binary PGP formats
+  **Storage:**
+  - S3
 
-  Workflow
+  **Networking:**
+  - VPC
 
-  1. File uploaded to SFTP → triggers Lambda via AWS Transfer workflow
-  2. Downloads encrypted file from S3
-  3. Fetches PGP credentials from Secrets Manager (secret name: aws/transfer/{serverId}/@pgp-default)
-  4. Decrypts content
-  5. Uploads to {destinationBucket}/{username}/ (removes .pgp extension)
-  6. Reports success/failure back to AWS Transfer
+  **Security:**
+  - Secrets Manager - Default PGP key & passphrase + SFTP User secrets for Lambda based Auth
 
-  Technologies
+  **Logging:**
+  - CloudWatch
 
-  - Node.js runtime
-  - AWS SDK v3 (S3, Secrets Manager, Transfer)
-  - OpenPGP library for encryption
-  - Integrated with AWS Transfer Family workflows
+  **File Transfer:**
+  - AWS Transfer Family
 
-  The project is focused on automated PGP decryption in SFTP workflows.
+  **IAC:**
+  - CloudFormation
+
+## Improvement Roadmap
+- add VPC flow logs for network visibility
+- enable container insights
+- properly scope some IAM wildcards
+- add CloudWatch alarms for errors/failures
+- Implement Lambda DLQ for failed invocations
+- add ECS task health checks and timeouts
+- figure out X-Ray tracing
