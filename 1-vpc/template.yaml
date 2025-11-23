@@ -17,6 +17,11 @@ Parameters:
     Default: '10.0.1.0/24'
     Description: CIDR block for public subnet
 
+  AllowedIPRanges:
+    Type: CommaDelimitedList
+    Default: '0.0.0.0/0'
+    Description: 'Comma-delimited list of IP CIDR ranges allowed to access SFTP (e.g., 203.0.113.0/24,198.51.100.0/24)'
+
 Resources:
   # ============================================================================
   # VPC
@@ -106,6 +111,80 @@ Resources:
         - !Ref PublicRouteTable
       VpcEndpointType: Gateway
 
+  # ============================================================================
+  # VPC Endpoint for Secrets Manager (Interface Endpoint)
+  # Optional but recommended for Lambda auth function
+  # ============================================================================
+  SecretsManagerVpcEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.secretsmanager'
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref PublicSubnet1
+      SecurityGroupIds:
+        - !Ref SecretsManagerEndpointSecurityGroup
+      PrivateDnsEnabled: true
+
+  SecretsManagerEndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub '${ProjectName}-secrets-manager-endpoint-sg'
+      GroupDescription: 'Security group for Secrets Manager VPC endpoint'
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref VpcCidr
+          Description: 'Allow HTTPS from VPC for Secrets Manager access'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-secrets-manager-endpoint-sg'
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ============================================================================
+  # Security Group for Transfer Family VPC Endpoint (IP Allowlist)
+  # ============================================================================
+  TransferSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub '${ProjectName}-transfer-sg'
+      GroupDescription: 'Security group for AWS Transfer Family SFTP endpoint - IP allowlist'
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-transfer-sg'
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # Dynamic ingress rules for each allowed IP range
+  TransferSecurityGroupIngressSSH:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref TransferSecurityGroup
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      CidrIp: !Select [0, !Ref AllowedIPRanges]
+      Description: 'Allow SSH/SFTP from allowed IP range'
+
+  # ============================================================================
+  # Elastic IP for Transfer Family VPC Endpoint
+  # ============================================================================
+  TransferElasticIP:
+    Type: AWS::EC2::EIP
+    DependsOn: AttachGateway
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-transfer-eip'
+        - Key: Project
+          Value: !Ref ProjectName
+
 Outputs:
   VpcId:
     Description: VPC ID
@@ -136,3 +215,27 @@ Outputs:
     Value: !Ref PublicSubnet1
     Export:
       Name: !Sub '${ProjectName}-PrivateSubnet1Id'
+
+  TransferSecurityGroupId:
+    Description: Security Group ID for Transfer Family SFTP endpoint
+    Value: !Ref TransferSecurityGroup
+    Export:
+      Name: !Sub '${ProjectName}-TransferSecurityGroupId'
+
+  TransferElasticIPAllocationId:
+    Description: Elastic IP Allocation ID for Transfer Family
+    Value: !GetAtt TransferElasticIP.AllocationId
+    Export:
+      Name: !Sub '${ProjectName}-TransferElasticIPAllocationId'
+
+  TransferElasticIP:
+    Description: Elastic IP address for Transfer Family SFTP endpoint
+    Value: !Ref TransferElasticIP
+    Export:
+      Name: !Sub '${ProjectName}-TransferElasticIP'
+
+  SecretsManagerVpcEndpointId:
+    Description: Secrets Manager VPC Endpoint ID
+    Value: !Ref SecretsManagerVpcEndpoint
+    Export:
+      Name: !Sub '${ProjectName}-SecretsManagerVpcEndpointId'

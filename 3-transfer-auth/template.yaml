@@ -1,0 +1,203 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS Transfer Family Lambda Authentication Function'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: 'sftp-decrypt'
+    Description: Project name for resource naming and tagging
+
+Resources:
+  # ============================================================================
+  # CloudWatch Log Group for Lambda
+  # ============================================================================
+  AuthFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${ProjectName}-transfer-auth'
+      RetentionInDays: 14
+
+  # ============================================================================
+  # IAM Role for Lambda Execution
+  # ============================================================================
+  AuthFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-TransferAuthLambdaRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: SecretsManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:aws/transfer/users/*'
+
+  # ============================================================================
+  # Lambda Function for Transfer Authentication
+  # ============================================================================
+  AuthFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-transfer-auth'
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Role: !GetAtt AuthFunctionRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          PROJECT_NAME: !Ref ProjectName
+          DEFAULT_ROLE_ARN:
+            Fn::ImportValue: !Sub '${ProjectName}-TransferUserRoleArn'
+      Code:
+        ZipFile: |
+          const { SecretsManagerClient, GetSecretValueCommand } = require('@aws-sdk/client-secrets-manager');
+
+          const secretsClient = new SecretsManagerClient();
+
+          exports.handler = async (event) => {
+              console.log('Transfer authentication request:', JSON.stringify(event, null, 2));
+
+              const {
+                  username,
+                  password,
+                  protocol,
+                  sourceIp,
+                  serverId
+              } = event;
+
+              // Validate required fields
+              if (!username || !serverId) {
+                  console.error('Missing required fields: username or serverId');
+                  return {};  // Empty response = authentication failed
+              }
+
+              try {
+                  // Retrieve user configuration from Secrets Manager
+                  const secretName = `aws/transfer/users/${username}`;
+                  console.log(`Retrieving user config from: ${secretName}`);
+
+                  const secretResponse = await secretsClient.send(
+                      new GetSecretValueCommand({ SecretId: secretName })
+                  );
+
+                  if (!secretResponse.SecretString) {
+                      console.error(`No secret found for user: ${username}`);
+                      return {};
+                  }
+
+                  const userConfig = JSON.parse(secretResponse.SecretString);
+                  console.log(`User config retrieved for: ${username}`);
+
+                  // Validate user configuration structure
+                  if (!userConfig.publicKeys || !Array.isArray(userConfig.publicKeys) || userConfig.publicKeys.length === 0) {
+                      console.error(`Invalid user config: missing or empty publicKeys for ${username}`);
+                      return {};
+                  }
+
+                  // Optional: Check IP allowlist (per-user)
+                  if (userConfig.allowedIPs && Array.isArray(userConfig.allowedIPs)) {
+                      const isIpAllowed = userConfig.allowedIPs.some(allowedIp => {
+                          // Simple IP/CIDR matching (basic implementation)
+                          // For production, use a proper CIDR library
+                          if (allowedIp.includes('/')) {
+                              // CIDR range - simplified check
+                              const [range] = allowedIp.split('/');
+                              return sourceIp.startsWith(range.split('.').slice(0, 3).join('.'));
+                          }
+                          return sourceIp === allowedIp;
+                      });
+
+                      if (!isIpAllowed) {
+                          console.error(`IP ${sourceIp} not allowed for user ${username}`);
+                          return {};
+                      }
+                  }
+
+                  // Build response for AWS Transfer Family
+                  const response = {
+                      Role: userConfig.role || process.env.DEFAULT_ROLE_ARN,
+                      PublicKeys: userConfig.publicKeys,
+                      HomeDirectoryType: userConfig.homeDirectoryType || 'LOGICAL',
+                  };
+
+                  // Add home directory mappings if using LOGICAL type
+                  if (response.HomeDirectoryType === 'LOGICAL') {
+                      response.HomeDirectoryDetails = userConfig.homeDirectoryMappings || [
+                          {
+                              Entry: '/',
+                              Target: `/BUCKET-NAME/in/sftp/${username}`
+                          }
+                      ];
+                  } else {
+                      response.HomeDirectory = userConfig.homeDirectory || `/BUCKET-NAME/in/sftp/${username}`;
+                  }
+
+                  // Optional: Add session policy for additional restrictions
+                  if (userConfig.policy) {
+                      response.Policy = JSON.stringify(userConfig.policy);
+                  }
+
+                  console.log(`Authentication successful for user: ${username}`);
+                  console.log('Response:', JSON.stringify(response, null, 2));
+
+                  return response;
+
+              } catch (error) {
+                  // Check if error is "secret not found"
+                  if (error.name === 'ResourceNotFoundException') {
+                      console.error(`User not found: ${username}`);
+                  } else {
+                      console.error('Authentication error:', error);
+                  }
+
+                  return {};  // Empty response = authentication failed
+              }
+          };
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-transfer-auth'
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ============================================================================
+  # Lambda Permission for Transfer Family to Invoke
+  # ============================================================================
+  AuthFunctionInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AuthFunction
+      Action: lambda:InvokeFunction
+      Principal: transfer.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+
+Outputs:
+  AuthFunctionArn:
+    Description: Lambda Function ARN for Transfer Authentication
+    Value: !GetAtt AuthFunction.Arn
+    Export:
+      Name: !Sub '${ProjectName}-TransferAuthFunctionArn'
+
+  AuthFunctionName:
+    Description: Lambda Function Name
+    Value: !Ref AuthFunction
+    Export:
+      Name: !Sub '${ProjectName}-TransferAuthFunctionName'
+
+  AuthFunctionLogGroup:
+    Description: CloudWatch Log Group for Auth Function
+    Value: !Ref AuthFunctionLogGroup
+    Export:
+      Name: !Sub '${ProjectName}-TransferAuthLogGroupName'

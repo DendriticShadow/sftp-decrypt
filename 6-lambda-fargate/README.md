@@ -78,7 +78,7 @@ cd ..
 ## Directory Structure
 
 ```
-5-lambda-fargate/
+6-lambda-fargate/
 ├── template.yaml           # CloudFormation template
 ├── deploy.sh              # Deployment script
 ├── fargate/               # Fargate worker code
