@@ -1,6 +1,6 @@
-# sftp-decrypt
+# SFTP-Decrypt
 
-  This was a project inspired from infrastructure I stood up at my current job. The main difference being this uses a fargate instance to handle the decryption process instead of soley existing in AWS Lambda.
+  This project is inspired from infrastructure I stood up in my current role. The main difference being this uses a fargate instance to handle the decryption process instead of soley existing in AWS Lambda.
 
   ## Purpose
   - Automated PGP file decryption pipeline using AWS Transfer, Lambda orchestration, and ECS Fargate.
