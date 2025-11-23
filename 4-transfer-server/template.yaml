@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'AWS Transfer Family SFTP Server'
+Description: 'AWS Transfer Family SFTP Server with Lambda Authentication and VPC Endpoint'
 
 Parameters:
   ProjectName:
@@ -9,7 +9,7 @@ Parameters:
 
   IdentityProviderType:
     Type: String
-    Default: 'SERVICE_MANAGED'
+    Default: 'AWS_LAMBDA'
     AllowedValues:
       - 'SERVICE_MANAGED'
       - 'API_GATEWAY'
@@ -19,11 +19,15 @@ Parameters:
 
   EndpointType:
     Type: String
-    Default: 'PUBLIC'
+    Default: 'VPC'
     AllowedValues:
       - 'PUBLIC'
       - 'VPC'
     Description: Endpoint type for SFTP access
+
+Conditions:
+  UseVpcEndpoint: !Equals [!Ref EndpointType, 'VPC']
+  UseLambdaAuth: !Equals [!Ref IdentityProviderType, 'AWS_LAMBDA']
 
 Resources:
   # ============================================================================
@@ -51,6 +55,32 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSTransferLoggingAccess
+
+  # ============================================================================
+  # IAM Role for Transfer to Invoke Lambda (for authentication)
+  # ============================================================================
+  TransferLambdaInvokeRole:
+    Type: AWS::IAM::Role
+    Condition: UseLambdaAuth
+    Properties:
+      RoleName: !Sub '${ProjectName}-TransferLambdaInvokeRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: transfer.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeLambda
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  Fn::ImportValue: !Sub '${ProjectName}-TransferAuthFunctionArn'
 
   # ============================================================================
   # IAM Role for Transfer Users (S3 Access)
@@ -101,6 +131,26 @@ Resources:
     Properties:
       EndpointType: !Ref EndpointType
       IdentityProviderType: !Ref IdentityProviderType
+
+      # Lambda authentication configuration
+      IdentityProviderDetails: !If
+        - UseLambdaAuth
+        - Function:
+            Fn::ImportValue: !Sub '${ProjectName}-TransferAuthFunctionArn'
+          InvocationRole: !GetAtt TransferLambdaInvokeRole.Arn
+        - !Ref AWS::NoValue
+
+      # VPC endpoint configuration
+      EndpointDetails: !If
+        - UseVpcEndpoint
+        - SubnetIds:
+            - Fn::ImportValue: !Sub '${ProjectName}-PublicSubnet1Id'
+          SecurityGroupIds:
+            - Fn::ImportValue: !Sub '${ProjectName}-TransferSecurityGroupId'
+          AddressAllocationIds:
+            - Fn::ImportValue: !Sub '${ProjectName}-TransferElasticIPAllocationId'
+        - !Ref AWS::NoValue
+
       LoggingRole: !GetAtt TransferLoggingRole.Arn
       Protocols:
         - SFTP
@@ -125,8 +175,14 @@ Outputs:
       Name: !Sub '${ProjectName}-TransferServerArn'
 
   TransferServerEndpoint:
-    Description: Transfer Server Endpoint
-    Value: !Sub '${TransferServer.ServerId}.server.transfer.${AWS::Region}.amazonaws.com'
+    Description: Transfer Server Endpoint (use Elastic IP for VPC endpoint)
+    Value: !If
+      - UseVpcEndpoint
+      - Fn::Sub:
+          - '${ElasticIP}'
+          - ElasticIP:
+              Fn::ImportValue: !Sub '${ProjectName}-TransferElasticIP'
+      - !Sub '${TransferServer.ServerId}.server.transfer.${AWS::Region}.amazonaws.com'
     Export:
       Name: !Sub '${ProjectName}-TransferServerEndpoint'
 
