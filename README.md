@@ -6,7 +6,7 @@
   - Automated PGP file decryption pipeline using AWS Transfer, Lambda orchestration, and ECS Fargate.
 
   ## Structure
-  - I have my repo separated into 6 CloudFormation stacks. I'm doing this because 1. its easier for me to visualize in my head, 2. I use a self-hosted teamcity server running in docker to deploy my CloudFormation templates to AWS and 3. I like using cross-stack references.
+  - I have my repo separated into 7 CloudFormation stacks. I'm doing this because 1. its easier for me to visualize in my head, 2. I use a self-hosted teamcity server running in docker to deploy my CloudFormation templates to AWS and 3. I like using cross-stack references.
   - Included are deployment scripts you can run using AWS CLI.
   - I have a lot of cost optimizations in place. If you deploy this in your own AWS account I'd recommend tweaking the cron job in the lambda function that stops/starts the SFTP endpoint if not removing it entirely. 
   - Out of all the AWS resources deployed for this project, the SFTP endpoint is the most expensive to leave running. When you aren't using it I highly recommend you turn it off as leaving it on 24/7 will cost you about $230 per month.
