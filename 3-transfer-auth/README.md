@@ -21,7 +21,7 @@ Example secret JSON:
   "publicKeys": [
     "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC... john.doe@example.com"
   ],
-  "role": "arn:aws:iam::123456789012:role/sftp-decrypt-TransferUserRole",
+  "role": "arn:aws:iam::123456789012:role/sftp-decrypt-userRole",
   "homeDirectoryType": "LOGICAL",
   "homeDirectoryMappings": [
     {
