@@ -26,7 +26,7 @@ Example secret JSON:
   "homeDirectoryMappings": [
     {
       "Entry": "/",
-      "Target": "/your-bucket-name/in/sftp/john.doe"
+      "Target": "/your-bucket-name/sftp/john.doe"
     }
   ],
   "allowedIPs": ["203.0.113.0/24", "198.51.100.50"]
