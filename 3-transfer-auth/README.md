@@ -55,12 +55,12 @@ aws secretsmanager create-secret \
     --secret-string '{
       "username": "jane.smith",
       "publicKeys": ["ssh-rsa AAAAB3..."],
-      "role": "arn:aws:iam::123456789012:role/sftp-decrypt-TransferUserRole",
+      "role": "arn:aws:iam::123456789012:role/sftp-decrypt-userRole",
       "homeDirectoryType": "LOGICAL",
       "homeDirectoryMappings": [
         {
           "Entry": "/",
-          "Target": "/bucket-name/in/sftp/jane.smith"
+          "Target": "/bucket-name/sftp/jane.smith"
         }
       ]
     }'
