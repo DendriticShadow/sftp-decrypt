@@ -16,7 +16,7 @@
   - This was when I discovered streaming decryption. Here the file is fed into memory in chunks, the decrypted chunks are then streamed back to S3, with the stream terminating once it hits EOF (end of file). The default chunk size in the OpenPGP.js is 64 KB, you can tweak this to your hearts content depending on the average size of encrypted files you handle. The higher the chunk size the higher the memory consumption but an added benefit is speed.
   
  ## How this works
- - User connects to SFTP endpoint via SSH. Lambda + Secrets Manager + Transfer authenticates user.
+ - User connects to SFTP endpoint via SSH protocol. Lambda + Secrets Manager + Transfer Service authenticates user.
   - I also use an IP allowlist so only IPs on that list can actually connect to the Transfer endpoint. 
  - File uploaded to SFTP → triggers AWS Transfer workflow
  - Workflow invokes Lambda orchestrator
